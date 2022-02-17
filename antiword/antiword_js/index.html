@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script>
+        const WordSize = 5;
+
+        class TileState {
+            // Create new instances of the same class as static attributes
+            static UNKNOWN = new TileState(0, "100,100,100");
+            static RIGHTLETTERWRONGPLACE = new TileState(1, "255,220,0");
+            static RIGHTLETTERRIGHTPLACE = new TileState(2, "0,200,0");
+            static WRONGLETTER = new TileState(3, "188,0,0");
+            static BORDERCOLOR = new TileState(4, "255,255,255");
+            static GAMEOVER = new TileState(5, "255,165,0")
+            constructor(state, color) {
+                this.state = state;
+                this.color = color;
+            }
+        }
+
+        class LetterTile {
+            static EMPTY = new LetterTile(0, TileState.UNKNOWN)
+            constructor(letter, tileState) {
+                this.letter = letter;
+                this.tileState = tileState;
+            }
+        }
+
+        class SecretLetterPositionBindClaim {
+            constructor(position) {
+                this.pos = position
+                this.claim = false
+                this.bound = false
+            }
+        }
+
+        //map[col]map[str(1)]bool
+        var columnEnforcementMap = new Map();
+        var secretWordLetterBindings = new Map();
+
+        //map[char]TileState
+        var inputKeyState = new Map()
+
+        var wordCursor = 0
+        var letterCursor = 0
+
+        //[][]LetterTile
+        var playtrix = []
+        var selectedSecretWord = "";
+        var globalWordMap = new Map();
+
+        function cellFromTile(tile, playtrixRow) {
+            var tileLetter = '&nbsp;';
+            if (tile.letter !== 0) {
+                tileLetter = String.fromCharCode(tile.letter);
+            }
+            playtrixCell = document.createElement('td');
+            playtrixCell.style.backgroundColor = "rgb(" + tile.tileState.color + ")";
+            playtrixCell.style.color = "white";
+            playtrixCell.innerHTML = tileLetter;
+            playtrixRow.appendChild(playtrixCell);
+        }
+
+        function appendRowFromWord(guessedWord, playtrixTable) {
+            playtrixRow = document.createElement('tr')
+            guessedWord.forEach(tile => cellFromTile(tile, playtrixRow))
+            playtrixTable.appendChild(playtrixRow)
+        }
+
+        function drawPlaytrix() {
+            let pNode = document.getElementById("playtrix")
+            while (pNode.firstChild) {
+                pNode.removeChild(pNode.lastChild);
+            }
+            let playtrixTable = document.createElement('table');
+            playtrix.forEach(guessedWord => appendRowFromWord(guessedWord, playtrixTable));
+            pNode.appendChild(playtrixTable);
+        }
+
+        function drawStatus() {
+            let sNode = document.getElementById("status")
+            while (sNode.firstChild) {
+                sNode.removeChild(sNode.lastChild);
+            }
+            let statusBar = document.createElement('p');
+            statusBar.style.fontFamily = "arial, sans-serif";
+            statusBar.style.fontSize = "x-large";
+            var wordCount = 0;
+            for (const [word, nothing] of globalWordMap.entries()) {
+                wordCount += 1;
+            }
+            statusBar.innerHTML = "Score " + playtrix.length + "<br>" + "Possible Words Remaining " + wordCount;
+            sNode.appendChild(statusBar)
+        }
+
+        function drawKeyboard() {
+            let kNode = document.getElementById("keyboard")
+            while (kNode.firstChild) {
+                kNode.removeChild(kNode.lastChild);
+            }
+            let keyboard = document.createElement('table');
+            for (let i = 0; i < 4; i++) {
+                let keyboardRow = document.createElement('tr');
+                for (let j = 0; j < 7; j++) {
+                    let charCodeAddon = (i * 7) + j;
+                    if (charCodeAddon < 26) {
+                        let keyboardLetter = String.fromCharCode('A'.charCodeAt(0) + charCodeAddon);
+                        let keyboardKey = document.createElement('td');
+                        let keyboardKeyButton = document.createElement('button');
+                        keyboardKeyButton.type = "button";
+                        keyboardKeyButton.onclick = function () {
+                            updateAndDraw(keyboardLetter);
+                        }
+                        keyboardKeyButton.innerText = keyboardLetter;
+                        keyboardKeyButton.style.backgroundColor = "rgb(" + inputKeyState.get(keyboardLetter).color + ")";
+                        keyboardKeyButton.style.fontFamily = "arial, sans-serif";
+                        keyboardKeyButton.style.fontSize = "x-large";
+                        keyboardKeyButton.style.color = "white";
+                        keyboardKey.appendChild(keyboardKeyButton);
+                        keyboardRow.appendChild(keyboardKey);
+                    }
+                }
+                keyboard.appendChild(keyboardRow);
+            }
+            let backspaceEnter = document.createElement('table');
+            let backspaceEnterRow = document.createElement('tr');
+            let backspaceCell = document.createElement('td');
+            let backspaceButton = document.createElement('button');
+            backspaceButton.type = "button";
+            backspaceButton.onclick = function () {
+                updateAndDraw("<");
+            }
+            backspaceButton.innerText = "Back";
+            backspaceButton.style.backgroundColor = "rgb(" + TileState.UNKNOWN.color + ")";
+            backspaceButton.style.fontFamily = "arial, sans-serif";
+            backspaceButton.style.fontSize = "x-large";
+            backspaceButton.style.color = "white";
+            backspaceCell.appendChild(backspaceButton);
+            backspaceEnterRow.appendChild(backspaceCell);
+
+            let enterCell = document.createElement('td');
+            let enterButton = document.createElement('button');
+            enterButton.type = "button";
+            enterButton.onclick = function () {
+                updateAndDraw("@");
+            }
+            enterButton.innerText = "Enter";
+            enterButton.style.backgroundColor = "rgb(" + TileState.UNKNOWN.color + ")";
+            enterButton.style.fontFamily = "arial, sans-serif";
+            enterButton.style.fontSize = "x-large";
+            enterButton.style.color = "white";
+            enterCell.appendChild(enterButton);
+            backspaceEnterRow.appendChild(enterCell);
+            
+            backspaceEnter.appendChild(backspaceEnterRow);
+            kNode.appendChild(keyboard);
+            kNode.appendChild(backspaceEnter);
+        }
+
+        function wordContainsLetter(aLetter) {
+            let retval = (secretWordLetterBindings.get(aLetter) != null)
+            return retval
+        }
+
+        function claimLetterAtPosition(letter, position) {
+            let instances = secretWordLetterBindings.get(letter);
+            for (let i = 0; i < instances.length; i++) {
+                if (instances[i].pos === position) {
+                    instances[i].claim = true
+                    return true
+                }
+            }
+            return false
+        }
+
+        function resetBindings() {
+            for (var [letter, bindings] of secretWordLetterBindings.entries()) {
+                bindings.forEach(binding => binding.bound = false)
+            }
+        }
+
+        function bindALetter(letter) {
+            if (!wordContainsLetter(letter)) {
+                return false
+            }
+
+            for (let i = 0; i < secretWordLetterBindings.get(letter).length; i++) {
+                if (!secretWordLetterBindings.get(letter)[i].claim) {
+                    if (!secretWordLetterBindings.get(letter)[i].bound) {
+                        secretWordLetterBindings.get(letter)[i].bound = true
+                        return true
+                    }
+                }
+            }
+
+            return false
+        }
+
+        function gameOver() {
+            console.log("Game Over!")
+        }
+
+        function enterPressed() {
+            var enteredWord = "";
+            for (let i = 0; i < WordSize; i++) {
+               enteredWord += String.fromCharCode(playtrix[wordCursor][i].letter);
+            }
+
+            if (enteredWord == selectedSecretWord) {
+                gameOver();
+                return
+            }
+
+            if (globalWordMap.get(enteredWord) == null) {
+                console.log(enteredWord + " not in dictionary.")
+                return
+            }
+
+            globalWordMap.delete(enteredWord);
+
+            let skipList = new Map();
+            for (let i = 0; i < enteredWord.length; i++) {
+
+                //First, match up "green" matches.
+                if (wordContainsLetter(enteredWord[i])) {
+                    if (claimLetterAtPosition(enteredWord[i], i)) {
+                        playtrix[wordCursor][i].tileState = TileState.RIGHTLETTERRIGHTPLACE;
+                        inputKeyState.set(enteredWord[i], TileState.RIGHTLETTERRIGHTPLACE);
+
+                        skipList.set(i, true); //Don't use this column as a binding for a yellow tile.
+
+                        //Enforcement map tracks the permitted inputs for column i.
+                        for (let j = 'A'.charCodeAt(0); j <= 'Z'.charCodeAt(0); j++) {
+                            columnEnforcementMap.get(i).set(String.fromCharCode(j), false)
+                        }
+                        columnEnforcementMap.get(i).set(enteredWord[i], true)
+                    }
+                }
+            }
+
+            resetBindings()
+
+            for (let i = 0; i < WordSize; i++) {
+                if (skipList.get(i)) {
+                    //Don't try to bind to perfect matches.
+                    continue
+                }
+
+                if (bindALetter(enteredWord[i])) {
+                    playtrix[wordCursor][i].tileState = TileState.RIGHTLETTERWRONGPLACE;
+                    if (inputKeyState.get(enteredWord[i]).state === TileState.UNKNOWN.state) {
+                        inputKeyState.set(enteredWord[i], TileState.RIGHTLETTERWRONGPLACE)
+                    }
+
+                    //Don't permit use of this letter in this column any more.
+                    columnEnforcementMap.get(i).set(enteredWord[i], false);
+                } else {
+                    playtrix[wordCursor][i].tileState = TileState.WRONGLETTER;
+                    if (inputKeyState.get(enteredWord[i]).state === TileState.UNKNOWN.state) {
+                        inputKeyState.set(enteredWord[i], TileState.WRONGLETTER)
+                    }
+
+                    //Don't permit use of this letter in this column any more.
+                    columnEnforcementMap.get(i).set(enteredWord[i], false);
+                }
+            }
+
+            //Delete words from global dictionary?
+            var wordsToDelete = new Map();
+            for (const [word, nothing] of globalWordMap.entries()) {
+                for (let i = 0; i < WordSize; i++) {
+                    var letterA = word[i];
+                    if (secretWordLetterBindings.get(letterA) == null) {
+                        for (let j = 0; j < WordSize; j++) {
+                            letterB = enteredWord[j];
+                            if (letterA === letterB) {
+                                wordsToDelete.set(word, true)
+                            }
+                        }
+                    }
+                }
+            }
+            for (const [word, nothing] of wordsToDelete.entries()) {
+                globalWordMap.delete(word)
+            }
+
+            //Initialize the playtrix such that it will contain one empty row:
+            var newRow = [];
+            for (let i = 0; i < WordSize; i++) {
+                newRow.push(new LetterTile(LetterTile.EMPTY.letter, LetterTile.EMPTY.tileState));
+            }
+            playtrix.push(newRow);
+            wordCursor += 1;
+            letterCursor = 0;
+
+            //console.log(playtrix)
+
+            return
+        }
+
+
+        function updateAndDraw(keyPress) {
+            if (keyPress != null) {
+                if (keyPress === '@') {
+                    if  (letterCursor == 5) {
+                        enterPressed();
+                    }
+                } else if (keyPress === '<') {
+                    if (letterCursor > 0) {
+                        letterCursor -= 1;
+                        playtrix[wordCursor][letterCursor].letter = 0;
+                    }
+                } else if (letterCursor < 5 &&
+                    columnEnforcementMap.get(letterCursor).get(keyPress)) {
+                    playtrix[wordCursor][letterCursor].letter = keyPress.charCodeAt(0)
+                    letterCursor += 1;
+                }
+            }
+
+            drawPlaytrix();
+            drawStatus();
+            drawKeyboard();
+        }
+
+        function startGame(wordMap, secretWord) {
+            selectedSecretWord = secretWord;
+            globalWordMap = wordMap;
+            //Create a map to hold the remaining legal letters for each game board column.
+            for (let i = 0; i < WordSize; i++) {
+                columnEnforcementMap.set(i, new Map());
+                for (let j = 'A'.charCodeAt(0); j <= 'Z'.charCodeAt('0'); j++) {
+                    columnEnforcementMap.get(i).set(String.fromCharCode(j), true);
+                }
+            }
+
+            //Create data structure permitting guessed letters to stake a claim on specific instances of
+            //a letter in the secret word.
+            for (let i = 0; i < WordSize; i++) {
+                if (secretWordLetterBindings.get(secretWord[i]) == null) {
+                    secretWordLetterBindings.set(secretWord[i], []);
+                }
+                secretWordLetterBindings.get(secretWord[i]).push(new SecretLetterPositionBindClaim(i));
+            }
+
+            //Initialize the playtrix such that it will contain one empty row:
+            var newRow = [];
+            for (let i = 0; i < WordSize; i++) {
+                newRow.push(new LetterTile(LetterTile.EMPTY.letter, LetterTile.EMPTY.tileState));
+                //newRow.push(new LetterTile('A'.charCodeAt(0), LetterTile.EMPTY.state));
+            }
+            playtrix.push(newRow);
+
+            //Initialize the input keys as having an unknown state.
+            for (let i = 'A'.charCodeAt(0); i <= 'Z'.charCodeAt('0'); i++) {
+                inputKeyState.set(String.fromCharCode(i), TileState.UNKNOWN);
+            }
+
+            updateAndDraw(null);
+        }
+
+        function loadWordListAndStartGame() {
+            //Load word list.
+            const wordMap = new Map();
+            var dictReq = new XMLHttpRequest();
+
+            dictReq.open("GET", "http://localhost:63342/antiword/dictionary/dictionary.txt", true);
+            dictReq.onreadystatechange = function() {
+                if (dictReq.readyState === 4 && dictReq.status == 200) {
+                    var wordArray = dictReq.responseText.split(/\n/);
+                    var randWordIdx = Math.floor(Math.random() * wordArray.length);
+                    wordArray.forEach(legalWord => wordMap.set(legalWord.toUpperCase(), true));
+                    startGame(wordMap, wordArray[randWordIdx % wordArray.length].toUpperCase());
+                }
+            }
+            dictReq.send();
+        }
+
+        loadWordListAndStartGame();
+    </script>
+    <style>
+        table {font-family: arial, sans-serif; font-size: xxx-large; width: 100%;}
+        td {border: 5px solid; border-color: white}
+    </style>
+</head>
+<body>
+<div style="text-align: center; font-family: arial, sans-serif; font-size: x-large; width: 100%;"><h2>A N T I W O R D L E</h2></div>
+<div style="text-align: center;"><p id="playtrix"></p></div>
+<div style="text-align: right;"><p id="status"></p></div>
+<div style="text-align: center;"><p id="keyboard">ZZZ</p></div>
+</body>
+</html>
