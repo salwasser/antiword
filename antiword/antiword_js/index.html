@@ -363,7 +363,7 @@
             const wordMap = new Map();
             var dictReq = new XMLHttpRequest();
 
-            dictReq.open("GET", "http://localhost:63342/antiword/dictionary/dictionary.txt", true);
+            dictReq.open("GET", "https://raw.githubusercontent.com/salwasser/antiword/master/antiword/dictionary/dictionary.txt", true);
             dictReq.onreadystatechange = function() {
                 if (dictReq.readyState === 4 && dictReq.status == 200) {
                     var wordArray = dictReq.responseText.split(/\n/);
